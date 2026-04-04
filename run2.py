@@ -163,18 +163,38 @@ def get_query_span(input_ids, tokenizer, query_text):
     Searches for the sub-sequence "Query: <query_text>" in the token
     stream and returns (start, end)  [end is exclusive].
     """
+    # Try tokenizing with add_special_tokens=False first
     query_marker = f"Query: {query_text}"
-    marker_ids   = tokenizer(query_marker, add_special_tokens=False).input_ids
+    marker_ids   = tokenizer(query_marker, add_special_tokens=False, add_prefix_space=False).input_ids
     marker_len   = len(marker_ids)
     ids_list     = input_ids.tolist()
     n            = len(ids_list)
 
+    # Search for exact match
     for i in range(n - marker_len + 1):
         if ids_list[i : i + marker_len] == marker_ids:
             return (i, i + marker_len)
 
-    # Fallback: assume the query sits at the very end of the sequence
-    return (n - marker_len, n)
+    # If exact match fails, split and search for both parts
+    query_prefix = "Query: "
+    query_prefix_ids = tokenizer(query_prefix, add_special_tokens=False, add_prefix_space=False).input_ids
+    query_text_ids = tokenizer(query_text, add_special_tokens=False, add_prefix_space=False).input_ids
+    prefix_len = len(query_prefix_ids)
+    
+    for i in range(n - prefix_len + 1):
+        if ids_list[i : i + prefix_len] == query_prefix_ids:
+            # Found "Query: ", now verify the following text matches
+            end_idx = i + prefix_len + len(query_text_ids)
+            if end_idx <= n and ids_list[i + prefix_len : end_idx] == query_text_ids:
+                return (i, end_idx)
+    
+    # Last fallback: search backward from the end for "Query: "
+    for i in range(n - 1, -1, -1):
+        if ids_list[i : i + prefix_len] == query_prefix_ids:
+            return (i, min(i + marker_len, n))
+    
+    # Emergency fallback: return a safe empty span
+    return (0, 0)
     
     
 
@@ -273,6 +293,11 @@ if __name__ == '__main__':
             tokenizer=tokenizer,
             query_text=question,
         )
+
+        # Debug: Check if query_span is valid
+        if query_span == (0, 0):
+            print(f"WARNING: Query span not found for query: {question[:50]}")
+            continue  # Skip this query if span is invalid
 
         doc_scores = query_to_docs_attention(attentions, query_span, item_spans)
         
