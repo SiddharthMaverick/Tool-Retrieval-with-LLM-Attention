@@ -103,12 +103,26 @@ def analyze_gold_attention(result, save_path="plot2/gold_attention_plot.png"):
     fig.suptitle("Attention and Rank of Gold Tool vs Position in Prompt", fontsize=14)
     
     # plot 1: mean attention score vs position
-    ax=axes[0]
+    ax = axes[0]
     ax.plot(unique_positions, mean_score_per_pos, color="steelblue", lw=2)
-    ax.fill_between(unique_positions, mean_score_per_pos-std_score_per_pos,
-                    mean_score_per_pos+std_score_per_pos, color="steelblue", alpha=0.3, label="Std Dev")
+    
+    # Clip the lower bound to 0 since attention scores cannot be negative
+    lower_bound = np.clip(mean_score_per_pos - std_score_per_pos, a_min=0, a_max=None)
+    upper_bound = mean_score_per_pos + std_score_per_pos
+    
+    ax.fill_between(unique_positions, lower_bound, upper_bound, 
+                    color="steelblue", alpha=0.3, label="Std Dev")
+                    
     ax.set_xlabel("Position of Gold Tool in Prompt", fontsize=12)
     ax.set_ylabel("Mean Attention Score to Gold Tool", fontsize=12)
+    
+    # --- The Adaptive Scale Fixes ---
+    # Ensure the y-axis bottoms out at exactly 0
+    ax.set_ylim(bottom=0)
+    # Automatically format tiny numbers with scientific notation (e.g., 1e-4)
+    ax.ticklabel_format(style='sci', axis='y', scilimits=(-3, 3))
+    # --------------------------------
+    
     ax.legend()
     ax.grid(True, linestyle="--", alpha=0.5)
     
