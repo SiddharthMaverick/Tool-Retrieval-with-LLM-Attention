@@ -17,7 +17,6 @@ import torch
 import random
 import numpy as np
 import matplotlib.pyplot as plt
-import os
 from utils import load_model_tokenizer, PromptUtils, get_queries_and_items
 
 # -------------------------
@@ -39,21 +38,26 @@ def query_to_docs_attention(attentions, query_span, doc_spans):
     doc_scores = torch.zeros(len(doc_spans), device=attentions[0].device)
     
     # TODO 1: implement to get final query to doc attention stored in doc_scores
-    doc_scores = torch.zeros(len(doc_spans), device=attentions[0].device)
     q_start, q_end = query_span
     num_layers = len(attentions)
 
-    for layer_attn in attentions:
-        # layer_attn: [1, num_heads, N, N]
-        # Average across heads -> [N, N]
-        avg_attn = layer_attn[0].mean(dim=0)
+    device = attentions[0].device
+    doc_lengths = torch.tensor(
+        [end - start for start, end in doc_spans], device=device
+    ).clamp(min=1.0)
+    
+    for layer_attention in attentions:
+        # layer_attention: [1, heads, N, N]  -> average over heads -> [N, N]
+        avg_attn   = layer_attention[0].mean(dim=0)
+        query_attn = avg_attn[q_start:q_end, :]          # [q_len, N]
 
-        for i, (d_start, d_end) in enumerate(doc_spans):
-            # Mean attention from each query token to each doc token
-            score = avg_attn[q_start:q_end, d_start:d_end].mean()
-            doc_scores[i] += score
+        for doc_idx, (d_start, d_end) in enumerate(doc_spans):
+            score = query_attn[:, d_start:d_end].sum()
+            doc_scores[doc_idx] += score
 
-    doc_scores /= num_layers
+    doc_scores = doc_scores / num_layers   # average over layers
+    doc_scores = doc_scores / doc_lengths  # normalise by doc length
+    
     return doc_scores
 
 
@@ -166,6 +170,9 @@ if __name__ == '__main__':
     count = 0
     start_time = time.time()
     results = []
+    correct_at_1 = 0
+    correct_at_5 = 0
+    total = 0
     for qix in tqdm(range(len(test_queries))):
         sample =  test_queries[qix]
         qid = sample["qid"]
@@ -217,7 +224,7 @@ if __name__ == '__main__':
         query_span = get_query_span(
             input_ids=inputs.input_ids[0].cpu(),
             tokenizer=tokenizer,
-            query_text=question) 
+            question=question) 
 
         doc_scores = query_to_docs_attention(attentions, query_span, item_spans)
 
@@ -237,14 +244,21 @@ if __name__ == '__main__':
             "gold_rank": gold_rank
         })
 
-        correct_at_1 += int(gold_rank == 0)
-        correct_at_5 += int(gold_rank < 5)
+        # TODO: calucalte recall@1, recall@5 metric and print at end of loop
+        if gold_rank == 0:
+            correct_at_1 += 1
+        if gold_rank < 5:
+            correct_at_5 += 1
         total += 1
 
-        # TODO: calucalte recall@1, recall@5 metric and print at end of loop
-        print(f"\nRecall@1: {correct_at_1 / total:.4f}")
-        print(f"Recall@5: {correct_at_5 / total:.4f}")
-        analyze_gold_attention(results)
+        del attentions
+        torch.cuda.empty_cache()
+
+    recall_at_1 = correct_at_1 / total
+    recall_at_5 = correct_at_5 / total
+    print(f"Recall@1: {recall_at_1:.4f}, Recall@5: {recall_at_5:.4f}")
+
+    analyze_gold_attention(results)
 
 
     
