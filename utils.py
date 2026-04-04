@@ -45,8 +45,9 @@ class PromptUtils:
         self.add_text1_length = len(tokenizer(self.add_text1, add_special_tokens=False).input_ids)
 
     
+    
     def create_prompt(self, query):
-        query_prompt = f"Query: {query}"+ "\nCorrect tool_id:"
+        query_prompt = f"Query: {query}\nCorrect tool_id:"
         prompt = self.prompt_prefix + \
                 self.all_docs_info_string + \
                 self.prompt_seperator + \
@@ -55,7 +56,6 @@ class PromptUtils:
                 query_prompt + \
                 self.prompt_suffix
         return prompt
-        
 
     def create_doc_pool_string(self, shuffled_keys, all_docs):
         doc_lengths = []

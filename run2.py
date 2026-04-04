@@ -97,9 +97,8 @@ def analyze_gold_attention(result, save_path="plot2/gold_attention_plot.png"):
 def get_query_span(inputs, prompt, question, tokenizer, putils):
     ip_ids = inputs.input_ids[0]  # [N]
 
-    # Exactly the same as in create_prompt:
-    # `f"Query: {query}\\nCorrect tool_id:"`
-    query_section = f"Query: {question}\\\\nCorrect tool_id:"
+    # Use real newline, not escape
+    query_section = f"Query: {question}\nCorrect tool_id:"
 
     q_start_char = prompt.find(query_section)
     if q_start_char == -1:
