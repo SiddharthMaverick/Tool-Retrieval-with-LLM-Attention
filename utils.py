@@ -14,6 +14,7 @@ def load_model_tokenizer(model_name, device, dtype = torch.float32):
     model = AutoModelForCausalLM.from_pretrained(model_name, 
                                                 dtype=dtype, 
                                                 local_files_only=False,
+                                                attn_implementation='eager',  # Required to use output_attentions
                                                 )
     # Configure model to output attentions
     model.config.output_attentions = True
