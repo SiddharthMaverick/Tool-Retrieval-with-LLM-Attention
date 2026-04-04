@@ -13,7 +13,7 @@ def load_model_tokenizer(model_name, device, dtype = torch.float32):
     tokenizer.pad_token_id = tokenizer.eos_token_id
     model = AutoModelForCausalLM.from_pretrained(model_name, 
                                                 output_attentions = True,
-                                                dtype=dtype, 
+                                                dtype=dtype,  
                                                 local_files_only = False, # set True when the model is already downloaded
                                                 )
     model.to(device)

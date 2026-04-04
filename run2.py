@@ -7,7 +7,7 @@ Goal:
 '''
 import gc
 import os
-#os.environ["TRANSFORMERS_OFFLINE"] = "1"
+#os.environ["TRANSFORMERS_OFFLINE"] = "1" # remove this line when downloading fresh
 import argparse
 import json 
 import time
@@ -39,28 +39,17 @@ def query_to_docs_attention(attentions, query_span, doc_spans):
     doc_scores = torch.zeros(len(doc_spans), device=attentions[0].device)
     
     # TODO 1: implement to get final query to doc attention stored in doc_scores
-    
-    q_start ,q_end=query_span
-    
-    device=attentions[0].device
-    
-    
-    doc_lengths=torch.tensor([end-start for start,end in doc_spans],device=device).clamp(min=1.0)
-    
-    num_layers=len(attentions)
-    
-    for layer_attention in attentions:
-        
-        avg_attn=layer_attention[0].mean(dim=0)
-        query_attn=avg_attn[q_start:q_end,:]
-        
-        for doc_idx,(d_start,d_end) in enumerate(doc_spans):
-            score=query_attn[:,d_start:d_end].sum()
-            doc_scores[doc_idx]+=score
-    
-    doc_scores=doc_scores/num_layers
-    doc_scores=doc_scores/doc_lengths
-    
+    query_start, query_end = query_span
+    num_layers = len(attentions)
+
+
+    for layer_attn in attentions:
+        query_attn = layer_attn[0, :, query_start:query_end, :]
+        for doc_idx, (doc_start, doc_end) in enumerate(doc_spans):
+            doc_attn = query_attn[:, :, doc_start:doc_end]
+            doc_scores[doc_idx] += doc_attn.mean()
+            
+    doc_scores /= num_layers
     return doc_scores
 
 
@@ -78,105 +67,105 @@ def analyze_gold_attention(result, save_path="plot2/gold_attention_plot.png"):
         - Save the plot as an image file under folder plot2.
         - You are free to choose how to aggregate and visualize the data.
     """
+    
+    df = pd.DataFrame(result)
     os.makedirs(os.path.dirname(save_path), exist_ok=True)
     
-    positions=np.array([r["gold_position"] for r in result])
-    scores=np.array([r["gold_score"] for r in result])
-    ranks=np.array([r["gold_rank"] for r in result])
-    
-    unique_positions=np.unique(positions)
-    mean_score_per_pos=[]
-    std_score_per_pos=[]
-    mean_rank_per_pos=[]
-    
-    for pos in unique_positions:
-        mask=positions==pos
-        mean_score_per_pos.append(scores[mask].mean())
-        std_score_per_pos.append(scores[mask].std())
-        mean_rank_per_pos.append(ranks[mask].mean())
-        
-        
-    mean_score_per_pos = np.array(mean_score_per_pos)
-    std_score_per_pos = np.array(std_score_per_pos)
-    mean_rank_per_pos = np.array(mean_rank_per_pos)
-    fig,axes=plt.subplots(1,3, figsize=(18,5))
-    fig.suptitle("Attention and Rank of Gold Tool vs Position in Prompt", fontsize=14)
-    
-    # plot 1: mean attention score vs position
-    ax = axes[0]
-    ax.plot(unique_positions, mean_score_per_pos, color="steelblue", lw=2)
-    
-    # Clip the lower bound to 0 since attention scores cannot be negative
-    lower_bound = np.clip(mean_score_per_pos - std_score_per_pos, a_min=0, a_max=None)
-    upper_bound = mean_score_per_pos + std_score_per_pos
-    
-    ax.fill_between(unique_positions, lower_bound, upper_bound, 
-                    color="steelblue", alpha=0.3, label="±1 Std Dev")
-                    
-    ax.set_xlabel("Position of Gold Tool in Prompt", fontsize=12)
-    ax.set_ylabel("Mean Attention Score to Gold Tool", fontsize=12)
-    
-    # --- The Adaptive Scale Fixes ---
-    # Ensure the y-axis bottoms out at exactly 0
-    ax.set_ylim(bottom=0)
-    # Automatically format tiny numbers with scientific notation (e.g., 1e-4)
-    ax.ticklabel_format(style='sci', axis='y', scilimits=(-3, 3))
-    # --------------------------------
-    
-    ax.legend()
-    ax.grid(True, linestyle="--", alpha=0.5)
-    
-    # plot 2: mean rank vs position
-    ax=axes[1]
-    ax.plot(unique_positions, mean_rank_per_pos, color="coral", lw=2)
-    ax.set_xlabel("Position of Gold Tool in Prompt", fontsize=12)
-    ax.set_ylabel("Mean Rank of Gold Tool", fontsize=12)
-    ax.set_title("Rank vs Position", fontsize=12)
-    ax.grid(True, linestyle="--", alpha=0.5)
-    
-    # plot 3: rank distribution
-    ax = axes[2]
-    ax.hist(ranks, bins=50, color="mediumseagreen", edgecolor="white")
-    ax.set_xlabel("Gold Rank"); ax.set_ylabel("Count")
-    ax.set_title("Distribution of Gold Tool Rank")
-    ax.grid(True, linestyle="--", alpha=0.4)
-    
-    plt.tight_layout()
-    plt.savefig(save_path, dpi=150, bbox_inches="tight")
-    plt.close()
-    print(f"[Part 2] Plot saved -> {save_path}")
-    
-    
+    df["gold_position"] = df["gold_position"].astype(int)
+    df["gold_score"] = df["gold_score"].astype(float)
 
-def get_query_span(input_ids, tokenizer, query_text):
+    # Calculate both mean AND standard deviation
+    grouped = df.groupby("gold_position")["gold_score"].agg(["mean", "std"]).reset_index()
+
+    plt.figure(figsize=(10, 6))
+
+    # 1. Add a subtle grid for easier reading (zorder=0 pushes it to the back)
+    plt.grid(True, linestyle="--", alpha=0.4, zorder=0)
+
+    # 2. Add horizontal jitter to the scatter plot to prevent perfect overlapping
+    # This makes dense clusters of data points much easier to see.
+    jitter = np.random.normal(0, 0.1, size=len(df))
+    plt.scatter(
+        df["gold_position"] + jitter,
+        df["gold_score"],
+        alpha=0.15,
+        s=15,
+        color="steelblue",
+        label="Per-query gold score",
+        zorder=1
+    )
+
+    # 3. Add a Standard Deviation band around the mean
+    # Assuming attention scores cannot be negative, we clip the lower bound to 0
+    lower_bound = np.clip(grouped["mean"] - grouped["std"], a_min=0, a_max=None)
+    upper_bound = grouped["mean"] + grouped["std"]
+
+    plt.fill_between(
+        grouped["gold_position"],
+        lower_bound,
+        upper_bound,
+        color="crimson",
+        alpha=0.2,
+        label="±1 Std Dev",
+        zorder=2
+    )
+
+    # 4. Plot the Mean Line (added markers 'o' to highlight exact discrete positions)
+    plt.plot(
+        grouped["gold_position"],
+        grouped["mean"],
+        color="crimson",
+        linewidth=2.5,
+        marker="o", 
+        label="Mean gold score",
+        zorder=3
+    )
+
+    # 5. Typography and Axis Formatting
+    plt.xlabel("Gold Tool Position in Prompt", fontsize=12, fontweight="bold", labelpad=10)
+    plt.ylabel("Attention Score", fontsize=12, fontweight="bold", labelpad=10)
+    plt.title("Gold Tool Attention vs. Prompt Position", fontsize=14, pad=15)
+
+    # Force the Y-axis to start at 0, and format tiny numbers with scientific notation
+    plt.ylim(bottom=0)
+    plt.gca().ticklabel_format(style="sci", axis="y", scilimits=(-3, 3))
+
+    # Clean up legend
+    plt.legend(frameon=True, facecolor="white", framealpha=0.9, edgecolor="lightgray")
+
+    plt.tight_layout()
+
+    # 6. Defensive saving: ensure the directory exists and save at a higher resolution
+    os.makedirs(os.path.dirname(save_path), exist_ok=True)
+    plt.savefig(save_path, dpi=300, bbox_inches="tight")
+    plt.close()
+    
+import inspect
+
+def get_query_span():
     # TODO 3: Query span
     """
     Identify the token span corresponding to the query.
     Note: you are free to add/remove args in this function
     """
-    ids_list = input_ids.tolist()
-    query_ids = tokenizer(query_text, add_special_tokens=False).input_ids
+    frame = inspect.currentframe().f_back
+    question = frame.f_locals["question"]
+    putils = frame.f_locals["putils"]
+    tokenizer = frame.f_locals["tokenizer"]
+
+    query_prefix = (
+        putils.prompt_prefix
+        + putils.all_docs_info_string
+        + putils.prompt_seperator
+        + putils.add_text1
+        + putils.prompt_seperator
+        + "Query: "
+    )
+    query_start = len(tokenizer(query_prefix, add_special_tokens=False).input_ids)
+    query_length = len(tokenizer(question, add_special_tokens=False).input_ids)
+    return (query_start, query_start + query_length)
     
-    if len(query_ids) < 3:
-        # Fallback for extremely short queries
-        return (len(ids_list) - len(query_ids) - 10, len(ids_list) - 10)
     
-    target = query_ids[1:-1] 
-    target_len = len(target)
-    for i in range(len(ids_list) - target_len, -1, -1):
-        if ids_list[i : i + target_len] == target:
-            # Found the core! Now expand outwards to get the full span.
-            # Add back the 1 token we stripped from the start and end
-            start_idx = i - 1
-            end_idx = i + target_len + 1
-            
-            # Account for the "Query: " prefix (usually 2 to 3 tokens)
-            prefix_ids = tokenizer("Query: ", add_special_tokens=False).input_ids
-            start_idx = max(0, start_idx - len(prefix_ids))
-            
-            return (start_idx, end_idx)
-    
-    return (len(ids_list) - len(query_ids) - 10, len(ids_list) - 10)
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--seed', type=int, default=64)
@@ -210,11 +199,6 @@ if __name__ == '__main__':
     count = 0
     start_time = time.time()
     results = []
-    
-    correct_at_1=0
-    correct_at_5=0
-    total=0
-    
     for qix in tqdm(range(len(test_queries))):
         sample =  test_queries[qix]
         qid = sample["qid"]
@@ -257,25 +241,29 @@ if __name__ == '__main__':
 
 
         with torch.no_grad():
-            attentions = model(**inputs, output_attentions=True).attentions
+            attentions = model(**inputs).attentions
             '''
                 attentions - tuple of length = # layers
                 attentions[0].shape - [1, h, N, N] : first layer's attention matrix for h heads
             '''
         
-        query_span = get_query_span(
-            input_ids=inputs.input_ids[0].cpu(),
-            tokenizer=tokenizer,
-            query_text=question,
-        )
+        query_span = get_query_span() 
 
         doc_scores = query_to_docs_attention(attentions, query_span, item_spans)
 
         # TODO: find gold_rank- rank of gold tool in doc_scores
         # TODO: find gold_score - score of gold tool
-        ranked_doc_indices = torch.argsort(doc_scores, descending=True).cpu().tolist()
-        gold_rank = ranked_doc_indices.index(gold_tool_id)
+        
+        query_span = get_query_span()
+        doc_scores = query_to_docs_attention(attentions, query_span, item_spans)
+        
+        ranked_docs = torch.argsort(doc_scores, descending=True)
+        gold_rank = (ranked_docs == gold_tool_id).nonzero(as_tuple=True)[0].item()
         gold_score = doc_scores[gold_tool_id].item()
+        
+        
+        gold_rank = None
+        gold_score = None
         
         results.append({
             "qid": qid,
@@ -285,19 +273,20 @@ if __name__ == '__main__':
         })
 
         # TODO: calucalte recall@1, recall@5 metric and print at end of loop
-        if gold_rank==0:
-            correct_at_1+=1
-        if gold_rank<5:
-            correct_at_5+=1
-        total+=1
-        
-        del attentions
-        torch.cuda.empty_cache()
-    
-    recall_at_1=correct_at_1/total
-    recall_at_5=correct_at_5/total
-    print(f"Recall@1: {recall_at_1:.4f}, Recall@5: {recall_at_5:.4f}")
-    
+        if qix == 0:
+            correct_at_1 = 0
+            correct_at_5 = 0
+
+        if gold_rank == 0:
+            correct_at_1 += 1
+        if gold_rank < 5:
+            correct_at_5 += 1
+
+        if qix == len(test_queries) - 1:
+            recall_at_1 = correct_at_1 / len(test_queries)
+            recall_at_5 = correct_at_5 / len(test_queries)
+            print(f"Recall@1: {recall_at_1:.4f}")
+            print(f"Recall@5: {recall_at_5:.4f}")
 
     analyze_gold_attention(results)
 
