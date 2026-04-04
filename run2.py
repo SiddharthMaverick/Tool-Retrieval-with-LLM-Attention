@@ -261,9 +261,7 @@ if __name__ == '__main__':
         gold_rank = (ranked_docs == gold_tool_id).nonzero(as_tuple=True)[0].item()
         gold_score = doc_scores[gold_tool_id].item()
         
-        
-        gold_rank = None
-        gold_score = None
+    
         
         results.append({
             "qid": qid,
