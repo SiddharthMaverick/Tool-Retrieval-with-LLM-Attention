@@ -94,41 +94,24 @@ def analyze_gold_attention(result, save_path="plot2/gold_attention_plot.png"):
     plt.close()
 
 
-def get_query_span(inputs, prompt, question, tokenizer, putils):
-    ip_ids = inputs.input_ids[0]  # [N]
-
-    # Use real newline, not escape
-    query_section = f"Query: {question}\nCorrect tool_id:"
-
-    q_start_char = prompt.find(query_section)
-    if q_start_char == -1:
-        print("Prompt (first 300 chars):")
-        print(prompt[:300])
-        print("Prompt (last 300 chars):")
-        print(prompt[-300:])
-        print("Expected query_section:", repr(query_section))
-        raise ValueError("query section not found in prompt")
-
-    q_end_char = q_start_char + len(query_section)
-
-    offset = 0
-    q_start_tok = 0
-    q_end_tok = len(ip_ids)
-
-    for i, token_id in enumerate(ip_ids):
-        txt = tokenizer.decode([token_id])
-        t_start = offset
-        t_end = offset + len(txt)
-
-        if t_start <= q_start_char < t_end:
-            q_start_tok = i
-        if t_start <= q_end_char <= t_end:
-            q_end_tok = i + 1
-            break
-
-        offset = t_end
-
-    return (q_start_tok, q_end_tok)
+def get_query_span(inputs, question, tokenizer):
+    """
+    Identifies the token span corresponding to the query in the prompt.
+    Searches backwards since the query is near the end of the prompt.
+    """
+    input_ids = inputs.input_ids[0].cpu().tolist()
+    query_ids = tokenizer(question, add_special_tokens=False).input_ids
+    
+    query_len = len(query_ids)
+    
+    # Search for the exact sequence of query tokens in the input_ids
+    # Searching backwards because the question is near the end
+    for i in range(len(input_ids) - query_len, -1, -1):
+        if input_ids[i:i+query_len] == query_ids:
+            return (i, i + query_len)
+    
+    # Fallback if exactly matching fails
+    return (len(input_ids) - query_len, len(input_ids))
 
 
 parser = argparse.ArgumentParser()
@@ -211,7 +194,7 @@ if __name__ == '__main__':
             attentions = outputs.attentions  # tuple of [1, heads, N, N]
 
         # Get query span
-        query_span = get_query_span(inputs, prompt, question, tokenizer, putils)
+        query_span = get_query_span(inputs, question, tokenizer)
 
         # Compute query -> doc attention scores
         doc_scores = query_to_docs_attention(attentions, query_span, item_spans)
