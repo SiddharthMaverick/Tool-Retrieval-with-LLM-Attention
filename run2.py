@@ -24,7 +24,7 @@ def seed_all(seed):
         torch.cuda.manual_seed_all(seed)
 
 
-def query_to_docs_attention(attentions, query_span, doc_spans):
+def query_to_docs_attention(attentions, query_span, doc_spans, debug=False):
     """
     attentions: tuple(num_layers) of [1, heads, N, N]
     query_span: (start, end)
@@ -36,22 +36,66 @@ def query_to_docs_attention(attentions, query_span, doc_spans):
 
     q_start, q_end = query_span
     N = attentions[0].shape[2]
+    
+    if debug:
+        print(f"\n[attention_debug] query_span: {query_span}, N (seq_len): {N}")
+        print(f"[attention_debug] num_layers: {num_layers}, num_docs: {len(doc_spans)}")
+        print(f"[attention_debug] attentions tuple length: {len(attentions)}")
+        print(f"[attention_debug] attentions[0] shape: {attentions[0].shape}")
+    
     query_mask = torch.arange(N, device=device).unsqueeze(0)  # [1, N]
     query_mask = (query_mask >= q_start) & (query_mask < q_end)  # [1, N]
+    
+    if debug:
+        print(f"[attention_debug] query_mask shape: {query_mask.shape}")
+        print(f"[attention_debug] query_mask sum (num_query_tokens): {query_mask.sum().item()}")
+        print(f"[attention_debug] query_mask: {query_mask}")
 
     for layer_idx in range(num_layers):
         A = attentions[layer_idx][0]  # [heads, N, N]
         A_mean = A.mean(dim=0)  # [N, N]  mean over heads
 
+        if debug and layer_idx == 0:
+            print(f"[attention_debug] Layer {layer_idx}: A shape: {A.shape}")
+            print(f"[attention_debug] Layer {layer_idx}: A_mean shape: {A_mean.shape}")
+            print(f"[attention_debug] Layer {layer_idx}: A_mean min/max: {A_mean.min():.6f} / {A_mean.max():.6f}")
+            print(f"[attention_debug] Layer {layer_idx}: A_mean sum: {A_mean.sum():.6f}")
+
         # attention from query tokens to the whole sequence
         q2ctx = A_mean[query_mask[0], :]  # [num_query_toks, N]
+        
+        if debug and layer_idx == 0:
+            print(f"[attention_debug] Layer {layer_idx}: q2ctx (before mean) shape: {q2ctx.shape}")
+            print(f"[attention_debug] Layer {layer_idx}: q2ctx (before mean) min/max: {q2ctx.min():.6f} / {q2ctx.max():.6f}")
+        
         q2ctx = q2ctx.mean(dim=0, keepdim=True)  # [1, N]
+        
+        if debug and layer_idx == 0:
+            print(f"[attention_debug] Layer {layer_idx}: q2ctx (after mean) shape: {q2ctx.shape}")
+            print(f"[attention_debug] Layer {layer_idx}: q2ctx (after mean) min/max: {q2ctx.min():.6f} / {q2ctx.max():.6f}")
+            print(f"[attention_debug] Layer {layer_idx}: q2ctx (after mean) sum: {q2ctx.sum():.6f}")
 
         for doc_idx, (d_start, d_end) in enumerate(doc_spans):
             doc_contrib = q2ctx[0, d_start:d_end].sum()  # scalar
+            
+            if debug and layer_idx == 0 and doc_idx < 3:
+                doc_span_vals = q2ctx[0, d_start:d_end]
+                print(f"[attention_debug] Layer {layer_idx}: Doc {doc_idx} span [{d_start}:{d_end}], values shape: {doc_span_vals.shape}")
+                print(f"[attention_debug] Layer {layer_idx}: Doc {doc_idx} contribution: {doc_contrib.item():.6f}")
+            
             doc_scores[doc_idx] += doc_contrib
 
+    if debug:
+        print(f"[attention_debug] doc_scores (before avg): min/max: {doc_scores.min():.6f} / {doc_scores.max():.6f}")
+        print(f"[attention_debug] doc_scores (before avg) sum: {doc_scores.sum():.6f}")
+    
     doc_scores /= num_layers  # average over layers
+    
+    if debug:
+        print(f"[attention_debug] doc_scores (after avg): min/max: {doc_scores.min():.6f} / {doc_scores.max():.6f}")
+        print(f"[attention_debug] doc_scores (after avg) sum: {doc_scores.sum():.6f}")
+        print(f"[attention_debug] top 5 doc_scores: {torch.topk(doc_scores, min(5, len(doc_scores))).values}")
+    
     return doc_scores
 
 
@@ -94,7 +138,7 @@ def analyze_gold_attention(result, save_path="plot2/gold_attention_plot.png"):
     plt.close()
 
 
-def get_query_span(inputs, question, tokenizer):
+def get_query_span(inputs, question, tokenizer, debug=False):
     """
     Identifies the token span corresponding to the query in the prompt.
     Searches backwards since the query is near the end of the prompt.
@@ -102,15 +146,27 @@ def get_query_span(inputs, question, tokenizer):
     input_ids = inputs.input_ids[0].cpu().tolist()
     query_ids = tokenizer(question, add_special_tokens=False).input_ids
     
+    if debug:
+        print(f"\n[query_span_debug] input_ids length: {len(input_ids)}")
+        print(f"[query_span_debug] question: '{question}'")
+        print(f"[query_span_debug] query_ids: {query_ids}")
+        print(f"[query_span_debug] query_ids length: {len(query_ids)}")
+    
     query_len = len(query_ids)
     
     # Search for the exact sequence of query tokens in the input_ids
     # Searching backwards because the question is near the end
     for i in range(len(input_ids) - query_len, -1, -1):
         if input_ids[i:i+query_len] == query_ids:
+            if debug:
+                print(f"[query_span_debug] Found query match at indices [{i}:{i+query_len}]")
+                print(f"[query_span_debug] Matched tokens: {tokenizer.decode(input_ids[i:i+query_len])}")
             return (i, i + query_len)
     
     # Fallback if exactly matching fails
+    if debug:
+        print(f"[query_span_debug] No exact match found! Using fallback span.")
+        print(f"[query_span_debug] Fallback span: [{len(input_ids) - query_len}:{len(input_ids)}]")
     return (len(input_ids) - query_len, len(input_ids))
 
 
@@ -136,9 +192,22 @@ if __name__ == '__main__':
 
     train_queries, test_queries, tools = get_queries_and_items()
 
-    print("---- debug print start ----")
+    print("\n" + "="*60)
+    print("---- COMPREHENSIVE DEBUG INFO ----")
+    print("="*60)
     print(f"seed: {args.seed}, model: {model_name}")
-    print("model.config._attn_implementation: ", model.config._attn_implementation)
+    print(f"device: {device}")
+    print(f"model.config._attn_implementation: {model.config._attn_implementation}")
+    print(f"num_heads: {num_heads}")
+    print(f"num_layers: {num_layers}")
+    print(f"hidden_size: {model.config.hidden_size}")
+    print(f"head_dim (d): {d}")
+    print(f"num_key_value_heads: {model.config.num_key_value_heads}")
+    print(f"num_key_value_groups: {num_key_value_groups}")
+    print(f"softmax_scaling (d^-0.5): {softmax_scaling}")
+    print(f"num_test_queries: {len(test_queries)}")
+    print(f"num_tools: {len(tools)}")
+    print("="*60 + "\n")
 
     dict_head_freq = {}
     df_data = []
@@ -156,6 +225,13 @@ if __name__ == '__main__':
         qid = sample["qid"]
         question = sample["text"]
         gold_tool_name = sample["gold_tool_name"]
+        
+        is_debug_sample = args.debug and qix < 5
+        
+        if is_debug_sample:
+            print(f"\n{'*'*60}")
+            print(f"SAMPLE {qix}: qid={qid}")
+            print(f"{'*'*60}")
 
         # -------------------- Do NOT change the shuffling here --------------------
         num_dbs = len(tools)
@@ -174,37 +250,71 @@ if __name__ == '__main__':
         db_lengths_pt = torch.tensor(doc_lengths, device=device)
 
         gold_tool_id = map_docname_id[gold_tool_name]
+        
+        if is_debug_sample:
+            print(f"\n[sample_debug] qid: {qid}")
+            print(f"[sample_debug] question: {question}")
+            print(f"[sample_debug] gold_tool_name: {gold_tool_name}")
+            print(f"[sample_debug] gold_tool_id: {gold_tool_id}")
+            print(f"[sample_debug] num_docs: {len(item_spans)}")
+            print(f"[sample_debug] doc_spans first 3: {item_spans[:3]}")
+            print(f"[sample_debug] doc spans: {item_spans}")
 
         prompt = putils.create_prompt(query=question)
         inputs = tokenizer(prompt, return_tensors="pt", add_special_tokens=False).to(device)
-
-        if args.debug and qix < 5:
+        
+        if is_debug_sample:
             ip_ids = inputs.input_ids[0].cpu()
-            print("-------" * 5)
-            print(prompt)
-            print("-------" * 5)
+            print(f"[sample_debug] input_ids shape: {ip_ids.shape}")
+            print(f"[sample_debug] input_ids length: {len(ip_ids)}")
+            print("\n--- PROMPT ---")
+            print(prompt[:500] + "..." if len(prompt) > 500 else prompt)
+            print("--- END PROMPT ---\n")
             print("---- doc1 ----")
-            print(tokenizer.decode(ip_ids[item_spans[0][0]: item_spans[0][1]]))
+            print(tokenizer.decode(ip_ids[item_spans[0][0]: item_spans[0][1]])[:200])
             print("---- lastdoc ----")
-            print(tokenizer.decode(ip_ids[item_spans[-1][0]: item_spans[-1][1]]))
-            print("-------" * 5)
+            print(tokenizer.decode(ip_ids[item_spans[-1][0]: item_spans[-1][1]])[:200])
 
         with torch.no_grad():
             outputs = model(**inputs)
             attentions = outputs.attentions  # tuple of [1, heads, N, N]
+        
+        if is_debug_sample:
+            print(f"\n[sample_debug] attentions type: {type(attentions)}")
+            print(f"[sample_debug] attentions length: {len(attentions)}")
+            if len(attentions) > 0:
+                print(f"[sample_debug] attentions[0] shape: {attentions[0].shape}")
+                print(f"[sample_debug] attentions[0] dtype: {attentions[0].dtype}")
+                print(f"[sample_debug] attentions[0] min/max: {attentions[0].min():.6f} / {attentions[0].max():.6f}")
 
         # Get query span
-        query_span = get_query_span(inputs, question, tokenizer)
+        query_span = get_query_span(inputs, question, tokenizer, debug=is_debug_sample)
 
         # Compute query -> doc attention scores
-        doc_scores = query_to_docs_attention(attentions, query_span, item_spans)
+        doc_scores = query_to_docs_attention(attentions, query_span, item_spans, debug=is_debug_sample)
+        
+        if is_debug_sample:
+            print(f"\n[sample_debug] FINAL doc_scores shape: {doc_scores.shape}")
+            print(f"[sample_debug] FINAL doc_scores: {doc_scores}")
+            print(f"[sample_debug] FINAL doc_scores min/max: {doc_scores.min():.6f} / {doc_scores.max():.6f}")
 
         # Rank documents by score
         _, indices = torch.sort(doc_scores, descending=True)
+        
+        if is_debug_sample:
+            print(f"\n[ranking_debug] sorted indices (top 5): {indices[:5].cpu().tolist()}")
+            print(f"[ranking_debug] sorted scores (top 5): {doc_scores[indices[:5]]}")
 
         # Gold rank and score
         gold_rank = (indices == gold_tool_id).nonzero(as_tuple=True)[0].item() + 1  # 1‑based
         gold_score = doc_scores[gold_tool_id]
+        
+        if is_debug_sample:
+            print(f"[ranking_debug] gold_tool_id: {gold_tool_id}")
+            print(f"[ranking_debug] gold_score: {gold_score.item():.6f}")
+            print(f"[ranking_debug] gold_rank: {gold_rank}")
+            print(f"[ranking_debug] gold_tool_name: {gold_tool_name}")
+            print(f"\n{'*'*60}\n")
 
         results.append({
             "qid": qid,
