@@ -100,6 +100,7 @@ def analyze_gold_attention(result, save_path="plot2/gold_attention_plot.png"):
     axes[0].set_ylabel("Mean Attention Score")
     axes[0].set_title("Gold Tool Attention Score vs Position\n(bubble size ∝ query count)")
 
+    axes[0].set_ylim(bottom=0, top=0.005)  # Ensure y-axis starts at 0
     # Add a smoothed trend line
     sorted_pos = grouped["position"].values
     sorted_scores = grouped["mean_score"].values
