@@ -301,16 +301,14 @@ if __name__ == '__main__':
         prompt = putils.create_prompt(query=question)
         inputs = tokenizer(prompt, return_tensors = "pt", add_special_tokens = False).to(device)
 
-        if args.debug and qix < 5:
-            ip_ids = inputs.input_ids[0].cpu()
-            print("-------"*5)
-            print(prompt)
-            print("-------"*5)
-            print("---- doc1 ----")
-            print(tokenizer.decode(ip_ids[item_spans[0][0]: item_spans[0][1]]))
-            print("---- lastdoc ----")
-            print(tokenizer.decode(ip_ids[item_spans[-1][0]: item_spans[-1][1]]))
-            print("-------"*5)
+        if args.debug and qix < 1:
+            print("====== PROMPT DEBUG ======")
+            print("RAW PROMPT:")
+            print(repr(prompt[:500]))  # Show first 500 chars
+            print("\nDECODED TOKENS:")
+            decoded = tokenizer.decode(inputs.input_ids[0].cpu())
+            print(repr(decoded[:500]))
+            print("====== END DEBUG =======")
 
 
         with torch.no_grad():
