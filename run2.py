@@ -143,16 +143,21 @@ def analyze_gold_attention(result, save_path="plot2/gold_attention_plot.png"):
     plt.ylabel("Attention Score",              fontsize=12, fontweight="bold", labelpad=10)
     plt.title("Gold Tool Attention vs. Prompt Position", fontsize=14, pad=15)
 
-    plt.ylim(bottom=0, top=0.003)
-    plt.gca().ticklabel_format(style="sci", axis="y", scilimits=(-3, 3))
+    # Set Y-axis limits dynamically based on actual data
+    max_score = df["gold_score"].max()
+    min_score = df["gold_score"].min()
+    y_padding = (max_score - min_score) * 0.1 if max_score > min_score else max_score * 0.1
+    plt.ylim(bottom=max(0, min_score - y_padding), top=max_score + y_padding)
+    
+    # Use scientific notation only if scores are very small
+    if max_score < 0.01:
+        plt.gca().ticklabel_format(style="sci", axis="y", scilimits=(-3, 3))
     plt.legend(frameon=True, facecolor="white", framealpha=0.9, edgecolor="lightgray")
     plt.tight_layout()
 
     plt.savefig(save_path, dpi=300, bbox_inches="tight")
     plt.close()
     print(f"Plot saved to {save_path}")
-    
-import inspect
 
 # FIX 2: explicit arguments instead of the fragile inspect frame-hack.
 # The original used inspect.currentframe().f_back to steal locals from the
