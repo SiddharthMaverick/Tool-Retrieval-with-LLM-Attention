@@ -285,8 +285,14 @@ if __name__ == '__main__':
 
 
         with torch.no_grad():
-            outputs    = model(**inputs, output_attentions=True)
+            outputs    = model(**inputs)
             attentions = outputs.attentions
+            
+            # Validate attentions were returned
+            if attentions is None:
+                print(f"ERROR: Model did not return attentions for query {qix}")
+                print(f"  Model config output_attentions: {model.config.output_attentions}")
+                continue
             '''
                 attentions - tuple of length = # layers
                 attentions[0].shape - [1, h, N, N] : first layer's attention matrix for h heads
@@ -304,8 +310,19 @@ if __name__ == '__main__':
         if query_span == (0, 0):
             print(f"WARNING: Query span not found for query: {question[:50]}")
             continue  # Skip this query if span is invalid
+        
+        # Ensure span contains at least one token
+        if query_span[0] >= query_span[1]:
+            print(f"WARNING: Invalid query span {query_span} for query: {question[:50]}")
+            continue
 
         doc_scores = query_to_docs_attention(attentions, query_span, item_spans)
+        
+        # Check if all scores are effectively zero
+        if doc_scores.max().item() < 1e-6:
+            if qix < 10:  # Only warn for first few queries
+                print(f"WARNING: Query {qix} has all-zero attention scores. Span: {query_span}")
+                print(f"  Query tokens: {tokenizer.decode(inputs.input_ids[0][query_span[0]:query_span[1]])}")
         
         ranked_docs = torch.argsort(doc_scores, descending=True)
         gold_rank = (ranked_docs == gold_tool_id).nonzero(as_tuple=True)[0].item()

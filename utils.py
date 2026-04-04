@@ -12,10 +12,11 @@ def load_model_tokenizer(model_name, device, dtype = torch.float32):
     tokenizer = AutoTokenizer.from_pretrained(model_name, local_files_only = True)
     tokenizer.pad_token_id = tokenizer.eos_token_id
     model = AutoModelForCausalLM.from_pretrained(model_name, 
-                                                output_attentions = True,
                                                 dtype=dtype, 
-                                                local_files_only = False, # set True when the model is already downloaded
+                                                local_files_only=False,
                                                 )
+    # Configure model to output attentions
+    model.config.output_attentions = True
     model.to(device)
     model.eval()
     return tokenizer, model
