@@ -268,23 +268,31 @@ if __name__ == '__main__':
             print(repr(prompt[:300]))
             print(f"\n[tokenizer_debug] Last 300 chars of prompt:")
             print(repr(prompt[-300:]))
+            
+            # Test tokenizer on special tokens first
+            test_header = '<|start_header_id|>'
+            test_header_ids = tokenizer(test_header, add_special_tokens=False).input_ids
+            print(f"\n[tokenizer_debug] Testing special token '<|start_header_id|>': {test_header_ids}")
         
-        inputs = tokenizer(prompt, return_tensors="pt", add_special_tokens=False).to(device)
+        # Tokenize WITHOUT truncation
+        inputs = tokenizer(prompt, return_tensors="pt", add_special_tokens=False, truncation=False).to(device)
         
         if is_debug_sample:
             ip_ids = inputs.input_ids[0].cpu()
             print(f"\n[tokenizer_debug] After tokenization:")
             print(f"[tokenizer_debug] input_ids shape: {ip_ids.shape}")
             print(f"[tokenizer_debug] input_ids length: {len(ip_ids)}")
-            print(f"[tokenizer_debug] First 20 token IDs: {ip_ids[:20].tolist()}")
+            print(f"[tokenizer_debug] First 30 token IDs: {ip_ids[:30].tolist()}")
+            print(f"[tokenizer_debug] Last 20 token IDs: {ip_ids[-20:].tolist()}")
             if len(ip_ids) > 0:
-                print(f"[tokenizer_debug] Decoded first 50 tokens: {tokenizer.decode(ip_ids[:50])}")
+                print(f"[tokenizer_debug] Decoded first 150 chars: {repr(tokenizer.decode(ip_ids[:100])[:150])}")
+                print(f"[tokenizer_debug] Decoded last 100 chars: {repr(tokenizer.decode(ip_ids[-50:]))}")
             print(f"\n[sample_debug] input_ids shape: {ip_ids.shape}")
             print(f"[sample_debug] input_ids length: {len(ip_ids)}")
             print("\n--- PROMPT SNIPPET ---")
             print(prompt[:500] + "..." if len(prompt) > 500 else prompt)
             print("--- END PROMPT ---\n")
-            if len(ip_ids) >= max(item_spans[0]) if item_spans else False:
+            if len(ip_ids) >= max(max(s) for s in item_spans) if item_spans else False:
                 print("---- doc1 ----")
                 print(tokenizer.decode(ip_ids[item_spans[0][0]: item_spans[0][1]])[:200])
                 print("---- lastdoc ----")
