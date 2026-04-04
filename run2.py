@@ -133,7 +133,6 @@ def get_query_span(input_ids, tokenizer, question):
 
     # Fallback: just use the tail
     return (len(ids) - query_len, len(ids))
-    return None
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--seed', type=int, default=64)
@@ -215,7 +214,10 @@ if __name__ == '__main__':
                 attentions[0].shape - [1, h, N, N] : first layer's attention matrix for h heads
             '''
         
-        query_span = get_query_span() 
+        query_span = get_query_span(
+            input_ids=inputs.input_ids[0].cpu(),
+            tokenizer=tokenizer,
+            query_text=question) 
 
         doc_scores = query_to_docs_attention(attentions, query_span, item_spans)
 
