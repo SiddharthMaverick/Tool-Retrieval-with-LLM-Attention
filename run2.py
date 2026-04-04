@@ -261,19 +261,36 @@ if __name__ == '__main__':
             print(f"[sample_debug] doc spans: {item_spans}")
 
         prompt = putils.create_prompt(query=question)
+        
+        if is_debug_sample:
+            print(f"\n[tokenizer_debug] FULL PROMPT LENGTH (chars): {len(prompt)}")
+            print(f"[tokenizer_debug] First 300 chars of prompt:")
+            print(repr(prompt[:300]))
+            print(f"\n[tokenizer_debug] Last 300 chars of prompt:")
+            print(repr(prompt[-300:]))
+        
         inputs = tokenizer(prompt, return_tensors="pt", add_special_tokens=False).to(device)
         
         if is_debug_sample:
             ip_ids = inputs.input_ids[0].cpu()
-            print(f"[sample_debug] input_ids shape: {ip_ids.shape}")
+            print(f"\n[tokenizer_debug] After tokenization:")
+            print(f"[tokenizer_debug] input_ids shape: {ip_ids.shape}")
+            print(f"[tokenizer_debug] input_ids length: {len(ip_ids)}")
+            print(f"[tokenizer_debug] First 20 token IDs: {ip_ids[:20].tolist()}")
+            if len(ip_ids) > 0:
+                print(f"[tokenizer_debug] Decoded first 50 tokens: {tokenizer.decode(ip_ids[:50])}")
+            print(f"\n[sample_debug] input_ids shape: {ip_ids.shape}")
             print(f"[sample_debug] input_ids length: {len(ip_ids)}")
-            print("\n--- PROMPT ---")
+            print("\n--- PROMPT SNIPPET ---")
             print(prompt[:500] + "..." if len(prompt) > 500 else prompt)
             print("--- END PROMPT ---\n")
-            print("---- doc1 ----")
-            print(tokenizer.decode(ip_ids[item_spans[0][0]: item_spans[0][1]])[:200])
-            print("---- lastdoc ----")
-            print(tokenizer.decode(ip_ids[item_spans[-1][0]: item_spans[-1][1]])[:200])
+            if len(ip_ids) >= max(item_spans[0]) if item_spans else False:
+                print("---- doc1 ----")
+                print(tokenizer.decode(ip_ids[item_spans[0][0]: item_spans[0][1]])[:200])
+                print("---- lastdoc ----")
+                print(tokenizer.decode(ip_ids[item_spans[-1][0]: item_spans[-1][1]])[:200])
+            else:
+                print(f"[ERROR] item_spans exceed input_ids length! Max span: {max(max(s) for s in item_spans)}, input length: {len(ip_ids)}")
 
         with torch.no_grad():
             outputs = model(**inputs)
