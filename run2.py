@@ -111,7 +111,7 @@ def analyze_gold_attention(result, save_path="plot2/gold_attention_plot.png"):
     upper_bound = mean_score_per_pos + std_score_per_pos
     
     ax.fill_between(unique_positions, lower_bound, upper_bound, 
-                    color="steelblue", alpha=0.3, label="Std Dev")
+                    color="steelblue", alpha=0.3, label="±1 Std Dev")
                     
     ax.set_xlabel("Position of Gold Tool in Prompt", fontsize=12)
     ax.set_ylabel("Mean Attention Score to Gold Tool", fontsize=12)
@@ -154,17 +154,29 @@ def get_query_span(input_ids, tokenizer, query_text):
     Identify the token span corresponding to the query.
     Note: you are free to add/remove args in this function
     """
-    query_marker = f"Query: {query_text}"
-    marker_ids   = tokenizer(query_marker, add_special_tokens=False).input_ids
-    marker_len   = len(marker_ids)
-    ids_list     = input_ids.tolist()
-    n            = len(ids_list)
- 
-    for i in range(n - marker_len + 1):
-        if ids_list[i: i + marker_len] == marker_ids:
-            return (i, i + marker_len)
+    ids_list = input_ids.tolist()
+    query_ids = tokenizer(query_text, add_special_tokens=False).input_ids
     
-    return (n - marker_len, n)
+    if len(query_ids) < 3:
+        # Fallback for extremely short queries
+        return (len(ids_list) - len(query_ids) - 10, len(ids_list) - 10)
+    
+    target = query_ids[1:-1] 
+    target_len = len(target)
+    for i in range(len(ids_list) - target_len, -1, -1):
+        if ids_list[i : i + target_len] == target:
+            # Found the core! Now expand outwards to get the full span.
+            # Add back the 1 token we stripped from the start and end
+            start_idx = i - 1
+            end_idx = i + target_len + 1
+            
+            # Account for the "Query: " prefix (usually 2 to 3 tokens)
+            prefix_ids = tokenizer("Query: ", add_special_tokens=False).input_ids
+            start_idx = max(0, start_idx - len(prefix_ids))
+            
+            return (start_idx, end_idx)
+    
+    return (len(ids_list) - len(query_ids) - 10, len(ids_list) - 10)
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--seed', type=int, default=64)
@@ -245,7 +257,7 @@ if __name__ == '__main__':
 
 
         with torch.no_grad():
-            attentions = model(**inputs).attentions
+            attentions = model(**inputs, output_attentions=True).attentions
             '''
                 attentions - tuple of length = # layers
                 attentions[0].shape - [1, h, N, N] : first layer's attention matrix for h heads
