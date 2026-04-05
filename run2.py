@@ -55,18 +55,8 @@ def query_to_docs_attention(attentions, query_span, doc_spans):
 
 
 def analyze_gold_attention(result, save_path="plot2/gold_attention_plot.png"):
-    # TODO 2: visualize graph
     """
-    input -> result: list of dicts with keys:
-                        - gold_position
-                        - gold_score
-                        - gold_rank
-    GOAL: Using the results data, generate a visualization that shows how attention to the gold tool varies with its position in the prompt.
-
-    Requirements:
-        - The plot should clearly illustrate whether position affects attention.
-        - Save the plot as an image file under folder plot2.
-        - You are free to choose how to aggregate and visualize the data.
+    Generates a clean, readable visualization of the 'Lost in the Middle' effect.
     """
     position_scores = {}
     for res in result:
@@ -80,26 +70,50 @@ def analyze_gold_attention(result, save_path="plot2/gold_attention_plot.png"):
 
     os.makedirs(os.path.dirname(save_path), exist_ok=True)
 
-    fig, ax = plt.subplots(figsize=(12, 6))
-    bars = ax.bar(positions, avg_scores, color="steelblue", edgecolor="black", alpha=0.8)
+    # Set up the figure
+    fig, ax = plt.subplots(figsize=(14, 7))
+    
+    # 1. Add horizontal gridlines for readability
+    ax.grid(axis='y', linestyle='--', alpha=0.6, zorder=0)
 
-    for bar, cnt in zip(bars, counts):
-        ax.text(
-            bar.get_x() + bar.get_width() / 2,
-            bar.get_height() + max(avg_scores) * 0.01,
-            f"n={cnt}",
-            ha="center", va="bottom", fontsize=7
-        )
+    # 2. Plot the bars (softer color, no borders to reduce visual noise)
+    bars = ax.bar(positions, avg_scores, color="#4C72B0", alpha=0.6, width=0.85, 
+                  zorder=2, label="Avg Score per Position")
 
-    ax.set_xlabel("Gold Tool Position (index in shuffled list)", fontsize=12)
-    ax.set_ylabel("Average Attention Score", fontsize=12)
-    ax.set_title("Average Query→Gold-Tool Attention by Gold Tool Position\n(Lost in the Middle?)", fontsize=13)
-    ax.set_xticks(positions)
-    ax.tick_params(axis="x", labelsize=8)
+    # 3. Add a Polynomial Trendline (Degree 3 fits the 'U-Shape' perfectly)
+    # This clearly illustrates the "Lost in the Middle" effect to the viewer
+    z = np.polyfit(positions, avg_scores, 3)
+    p = np.poly1d(z)
+    ax.plot(positions, p(positions), color="#C44E52", linewidth=3, linestyle="-", 
+            zorder=3, label="Trendline (Poly Fit)")
+
+    # 4. Fix X-Axis Clutter (Show ticks every 5 positions instead of every single one)
+    ax.set_xticks(np.arange(min(positions), max(positions) + 1, 5))
+    
+    # 5. Clean up Labels, Titles, and Fonts
+    ax.set_xlabel("Gold Tool Position (index in shuffled list)", fontsize=13, fontweight='bold', labelpad=10)
+    ax.set_ylabel("Average Attention Score", fontsize=13, fontweight='bold', labelpad=10)
+    ax.set_title("Average Query → Gold-Tool Attention by Gold Tool Position\n(Lost in the Middle Effect)", 
+                 fontsize=15, fontweight='bold', pad=15)
+
+    # 6. Remove the cluttered 'n=' text above every bar. 
+    # Instead, summarize the sample size in a clean text box.
+    avg_n = int(np.mean(counts))
+    ax.text(0.02, 0.95, f"Avg samples per position ≈ {avg_n}",
+            transform=ax.transAxes, fontsize=11, verticalalignment='top',
+            bbox=dict(boxstyle='round,pad=0.5', facecolor='white', edgecolor='gray', alpha=0.9),
+            zorder=4)
+
+    # 7. Clean up the borders (remove top and right spines)
+    ax.spines['top'].set_visible(False)
+    ax.spines['right'].set_visible(False)
+    
+    ax.legend(fontsize=12)
 
     plt.tight_layout()
-    plt.savefig(save_path, dpi=150)
+    plt.savefig(save_path, dpi=300) # Increased DPI for a crisper image
     plt.close()
+    
     print(f"Plot saved to {save_path}")
 
 def get_query_span(tokenized_query, tokenized_prompt):
