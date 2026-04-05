@@ -2,7 +2,30 @@ import torch
 from tqdm import tqdm
 from utils import PromptUtils
 import random
-from run3 import get_query_span
+
+def get_query_span(tokenized_query, tokenized_prompt):
+    # TODO 3: Query span
+    """
+    Identify the token span corresponding to the query.
+    Note: you are free to add/remove args in this function
+    """
+    start = len(tokenized_prompt) - 1
+    end = len(tokenized_prompt) - 1
+
+    i = len(tokenized_prompt) - 1
+    j = len(tokenized_query) - 1
+
+    while(i >= 0):
+        if tokenized_prompt[i] == tokenized_query[j]:
+            if j == len(tokenized_query) - 1:
+                end = i + 1
+            j -= 1
+            if j < 0:
+                start = i
+                break
+        i -= 1  
+
+    return (start, end)
 
 def select_retrieval_heads(train_queries, model, tokenizer, tools, device, max_heads=20):
     # TODO 3: Head selection

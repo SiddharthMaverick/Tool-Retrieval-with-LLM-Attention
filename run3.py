@@ -19,7 +19,7 @@ from tqdm import tqdm
 
 from utils import load_model_tokenizer, PromptUtils, get_queries_and_items
 
-from code3 import select_retrieval_heads
+from code3 import select_retrieval_heads, get_query_span
 
 # -------------------------
 # Do NOT change
@@ -62,31 +62,6 @@ def query_to_docs_attention_heads(attentions, query_span, doc_spans, selected_he
     doc_scores /= len(selected_heads)  # average over selected heads
 
     return doc_scores
-
-
-def get_query_span(tokenized_query, tokenized_prompt):
-    # TODO 3: Query span
-    """
-    Identify the token span corresponding to the query.
-    Note: you are free to add/remove args in this function
-    """
-    start = len(tokenized_prompt) - 1
-    end = len(tokenized_prompt) - 1
-
-    i = len(tokenized_prompt) - 1
-    j = len(tokenized_query) - 1
-
-    while(i >= 0):
-        if tokenized_prompt[i] == tokenized_query[j]:
-            if j == len(tokenized_query) - 1:
-                end = i + 1
-            j -= 1
-            if j < 0:
-                start = i
-                break
-        i -= 1  
-
-    return (start, end)
 
 
 parser = argparse.ArgumentParser()
