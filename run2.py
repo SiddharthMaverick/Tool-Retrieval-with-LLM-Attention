@@ -219,17 +219,35 @@ if __name__ == '__main__':
 
 
         with torch.no_grad():
-            attentions = model(**inputs).attentions
+            outputs    = model(**inputs, output_attentions=True)
+            attentions = outputs.attentions
             '''
                 attentions - tuple of length = # layers
                 attentions[0].shape - [1, h, N, N] : first layer's attention matrix for h heads
             '''
         
-        query_span = get_query_span(inputs.input_ids[0], putils)
+        query_span = get_query_span(input_ids=inputs.input_ids[0].cpu(),putils=putils)
         
         if query_span[0] >= query_span[1]:
             del inputs
             continue
+        
+        with torch.no_grad():
+            outputs = model(**inputs, output_attentions=True)
+            
+            # --- CRITICAL MEMORY FIX ---
+            # Move the massive 9GB attention maps to CPU instantly.
+            attentions = tuple(layer_attn.cpu() for layer_attn in outputs.attentions)
+            
+            # Aggressively delete the outputs (which holds the ~1GB logits) and inputs
+            del outputs
+            del inputs
+            
+            # Force PyTorch to release the VRAM back to the GPU before the next calculation
+            import gc
+            gc.collect()
+            torch.cuda.empty_cache()
+            # ---------------------------
 
         doc_scores = query_to_docs_attention(attentions, query_span, item_spans)
 
@@ -252,9 +270,8 @@ if __name__ == '__main__':
         if gold_rank < 5:
             correct_at_5 += 1
         total += 1
- 
-        del attentions
-        torch.cuda.empty_cache()
+
+        
         
         
     if total > 0:
