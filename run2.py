@@ -55,8 +55,8 @@ def query_to_docs_attention(attentions, query_span, doc_spans):
         for doc_idx, (doc_start, doc_end) in enumerate(doc_spans):
             doc_scores[doc_idx] += query_attn[:, doc_start:doc_end].sum()
 
-    doc_scores /= num_layers   # average over layers
-    doc_scores /= doc_lengths  # normalise by doc length
+    doc_scores /= num_layers
+    doc_scores /= doc_lengths
     return doc_scores
 
 
@@ -79,24 +79,15 @@ def analyze_gold_attention(result, save_path="plot2/gold_attention_plot.png"):
     plt.grid(True, linestyle="--", alpha=0.4, zorder=0)
 
     jitter = np.random.normal(0, 0.1, size=len(df))
-    plt.scatter(
-        df["gold_position"] + jitter,
-        df["gold_score"],
-        alpha=0.15, s=15, color="steelblue",
-        label="Per-query gold score", zorder=1,
-    )
+    plt.scatter(df["gold_position"] + jitter, df["gold_score"],
+                alpha=0.15, s=15, color="steelblue", label="Per-query gold score", zorder=1)
 
     lower_bound = np.clip(grouped["mean"] - grouped["std"], a_min=0, a_max=None)
     upper_bound = grouped["mean"] + grouped["std"]
-    plt.fill_between(
-        grouped["gold_position"], lower_bound, upper_bound,
-        color="crimson", alpha=0.2, label="+/-1 Std Dev", zorder=2,
-    )
-    plt.plot(
-        grouped["gold_position"], grouped["mean"],
-        color="crimson", linewidth=2.5, marker="o",
-        label="Mean gold score", zorder=3,
-    )
+    plt.fill_between(grouped["gold_position"], lower_bound, upper_bound,
+                     color="crimson", alpha=0.2, label="+/-1 Std Dev", zorder=2)
+    plt.plot(grouped["gold_position"], grouped["mean"],
+             color="crimson", linewidth=2.5, marker="o", label="Mean gold score", zorder=3)
 
     plt.xlabel("Gold Tool Position in Prompt", fontsize=12, fontweight="bold", labelpad=10)
     plt.ylabel("Attention Score",               fontsize=12, fontweight="bold", labelpad=10)
@@ -117,43 +108,41 @@ def analyze_gold_attention(result, save_path="plot2/gold_attention_plot.png"):
     print(f"Plot saved to {save_path}")
 
 
-def get_query_span(input_ids, tokenizer, query_text):
+def get_query_span(input_ids, tokenizer, putils, query_text):
     """
-    Find token span for the query.
-    NEVER use tokenizer.decode() — it returns <unk> for Llama-3 prompts
-    containing special tokens. Search token IDs directly instead.
+    Compute the query token span ARITHMETICALLY from PromptUtils metadata.
+
+    WHY: The tokenizer maps ALL tokens to ID 0 on this server setup, so any
+    approach that searches for token IDs (including tokenizer.decode or direct
+    ID matching) will fail — everything looks like [0, 0, 0, ...].
+
+    The prompt structure built by PromptUtils.create_prompt is:
+        [prefix]  [sep+doc_0]  [sep+doc_1] ... [sep+doc_N]
+        [sep] [add_text1] [sep] [Query: {q}\nCorrect tool_id:] [suffix]
+
+    PromptUtils already tracks token counts for every piece via the same
+    tokenizer, so the RELATIVE offsets are correct even when all IDs are 0.
+
+    Using that arithmetic:
+        query_start = doc_spans[-1][1]   (end of last doc)
+                    + 1                  (space token of sep before add_text1)
+                    + add_text1_length   (add_text1 tokens)
+                    + 1                  (space token of sep before query_prompt)
+
+        query_end   = total_seq_len - prompt_suffix_length
+                    (everything up to but not including the assistant header)
     """
-    ids_list = input_ids.tolist()
-    n = len(ids_list)
+    total_len     = len(input_ids)
+    last_doc_end  = putils.doc_spans[-1][1]
 
-    # Strategy 1: search for "Query: {query_text}" token ids
-    query_prefix_ids = tokenizer(f"Query: {query_text}", add_special_tokens=False).input_ids
-    qp_len = len(query_prefix_ids)
-    if qp_len > 0:
-        for i in range(n - qp_len + 1):
-            if ids_list[i: i + qp_len] == query_prefix_ids:
-                return (i, i + qp_len)
+    query_start = last_doc_end + 1 + putils.add_text1_length + 1
+    query_end   = total_len - putils.prompt_suffix_length
 
-    # Strategy 2: search for just the query text
-    query_only_ids = tokenizer(query_text, add_special_tokens=False).input_ids
-    qo_len = len(query_only_ids)
-    if qo_len > 0:
-        for i in range(n - qo_len + 1):
-            if ids_list[i: i + qo_len] == query_only_ids:
-                return (i, i + qo_len)
+    # Clamp to valid range
+    query_start = max(0, min(query_start, total_len - 1))
+    query_end   = max(query_start + 1, min(query_end, total_len))
 
-    # Strategy 3: find "Query:" label, then take next qo_len tokens
-    query_label_ids = tokenizer("Query:", add_special_tokens=False).input_ids
-    ql_len = len(query_label_ids)
-    for i in range(n - ql_len + 1):
-        if ids_list[i: i + ql_len] == query_label_ids:
-            end = min(i + ql_len + max(qo_len, 1), n)
-            return (i, end)
-
-    # Strategy 4: last resort
-    if qo_len > 0:
-        return (max(0, n - qo_len), n)
-    return (0, 0)
+    return (query_start, query_end)
 
 
 parser = argparse.ArgumentParser()
@@ -173,14 +162,9 @@ if __name__ == '__main__':
         model_name=model_name, device=device, dtype=torch.float16
     )
 
-    # -----------------------------------------------------------------------
-    # CRITICAL FIX: output_attentions=True passed to from_pretrained() is
-    # silently ignored by newer transformers (it's not a valid from_pretrained
-    # kwarg). The warning in the log confirms this:
-    #   "generation flags are not valid and may be ignored: ['output_attentions']"
-    # We must set it on the config explicitly so the forward pass returns
-    # real attention weights instead of zeros/None.
-    # -----------------------------------------------------------------------
+    # CRITICAL FIX: output_attentions=True is silently ignored by from_pretrained()
+    # (it's not a valid kwarg — the log warning confirms this).
+    # Set it on config AND pass explicitly in every forward call.
     model.config.output_attentions = True
 
     num_heads            = model.config.num_attention_heads
@@ -241,15 +225,18 @@ if __name__ == '__main__':
         if args.debug and qix < 1:
             print("====== PROMPT DEBUG ======")
             print("RAW PROMPT (first 300 chars):", repr(prompt[:300]))
-            print("First 30 token IDs:", inputs.input_ids[0][:30].tolist())
-            qids = tokenizer(f"Query: {question}", add_special_tokens=False).input_ids
-            print("'Query: <q>' token IDs (first 10):", qids[:10])
+            print("Total tokens:", inputs.input_ids.shape[1])
+            print("prompt_prefix_length:", putils.prompt_prefix_length)
+            print("add_text1_length:", putils.add_text1_length)
+            print("prompt_suffix_length:", putils.prompt_suffix_length)
+            print("last doc span:", putils.doc_spans[-1])
+            q_start_dbg = putils.doc_spans[-1][1] + 1 + putils.add_text1_length + 1
+            q_end_dbg   = inputs.input_ids.shape[1] - putils.prompt_suffix_length
+            print(f"Computed query_span: ({q_start_dbg}, {q_end_dbg})")
             print("====== END DEBUG =======")
 
         with torch.no_grad():
-            # CRITICAL FIX: pass output_attentions=True explicitly in the
-            # forward call. Relying on model.config alone is not sufficient
-            # for all transformers versions.
+            # CRITICAL: pass output_attentions=True in the forward call itself
             outputs    = model(**inputs, output_attentions=True)
             attentions = outputs.attentions
             
@@ -257,7 +244,6 @@ if __name__ == '__main__':
                 print(f"ERROR: attentions is None for query {qix}")
                 continue
 
-            # Sanity check on first query
             if qix == 0:
                 nonzero = sum(a.abs().sum().item() > 0 for a in attentions)
                 print(f"[Sanity] Non-zero attention layers: {nonzero}/{len(attentions)}")
@@ -266,23 +252,25 @@ if __name__ == '__main__':
                 attentions[0].shape - [1, h, N, N]
             '''
         
+        # ARITHMETIC span — works regardless of tokenizer ID issues
         query_span = get_query_span(
-            input_ids=inputs.input_ids[0].cpu(),
+            input_ids=inputs.input_ids[0],
             tokenizer=tokenizer,
+            putils=putils,
             query_text=question,
         )
 
-        if query_span == (0, 0) or query_span[0] >= query_span[1]:
-            print(f"WARNING: Query span not found for query: {question[:50]}")
+        if query_span[0] >= query_span[1]:
+            print(f"WARNING: invalid query_span {query_span} for: {question[:50]}")
             del attentions
             torch.cuda.empty_cache()
             continue
 
         doc_scores = query_to_docs_attention(attentions, query_span, item_spans)
         
-        if doc_scores.max().item() < 1e-9:
-            if qix < 5:
-                print(f"WARNING: all-zero scores at query {qix}, span={query_span}")
+        if args.debug and qix < 3:
+            print(f"[q{qix}] span={query_span}, max_score={doc_scores.max().item():.6f}, "
+                  f"gold_score={doc_scores[gold_tool_id].item():.6f}")
 
         ranked_docs = torch.argsort(doc_scores, descending=True)
         gold_rank   = (ranked_docs == gold_tool_id).nonzero(as_tuple=True)[0].item()
@@ -295,10 +283,8 @@ if __name__ == '__main__':
             "gold_rank":     gold_rank,
         })
 
-        if gold_rank == 0:
-            correct_at_1 += 1
-        if gold_rank < 5:
-            correct_at_5 += 1
+        if gold_rank == 0: correct_at_1 += 1
+        if gold_rank < 5:  correct_at_5 += 1
         total += 1
 
         del attentions
