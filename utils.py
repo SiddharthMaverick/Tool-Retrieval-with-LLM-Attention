@@ -9,7 +9,7 @@ import pandas as pd
 import random
 
 def load_model_tokenizer(model_name, device, dtype = torch.float32):
-    tokenizer = AutoTokenizer.from_pretrained(model_name#, local_files_only = True)
+    tokenizer = AutoTokenizer.from_pretrained(model_name)#, local_files_only = True)
     tokenizer.pad_token_id = tokenizer.eos_token_id
     model = AutoModelForCausalLM.from_pretrained(model_name, 
                                                 output_attentions = True,
