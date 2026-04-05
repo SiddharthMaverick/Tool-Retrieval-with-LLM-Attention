@@ -185,9 +185,7 @@ if __name__ == '__main__':
         # Get query span BEFORE running the model so we can skip invalid prompts early
         query_span = get_query_span(
             input_ids=inputs.input_ids[0].cpu(),
-            tokenizer=tokenizer,
-            putils=putils,
-            query_text=question,
+            putils=putils
         )
 
         if query_span[0] >= query_span[1]:
