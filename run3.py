@@ -156,11 +156,14 @@ if __name__ == '__main__':
         ranked_docs = torch.argsort(doc_scores, descending=True)
         gold_rank = (ranked_docs == gold_tool_id).nonzero(as_tuple=True)[0].item()
 
-
         # TODO: measure the recall@1, recall@5
         correct_at_1 += (gold_rank == 0)
         correct_at_5 += (gold_rank < 5)
         total += 1
+
+        # Clean up GPU memory
+        del attentions, doc_scores, inputs, ranked_docs
+        torch.cuda.empty_cache()
 
     recall_at_1 = correct_at_1 / total
     recall_at_5 = correct_at_5 / total

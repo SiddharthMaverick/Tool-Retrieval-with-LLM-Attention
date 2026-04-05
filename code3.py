@@ -98,6 +98,10 @@ def select_retrieval_heads(train_queries, model, tokenizer, tools, device, max_h
                 gold_rank = (sorted_indices == gold_tool_id).nonzero(as_tuple=True)[0].item() + 1 # 1 indexed rank
                 query_gold_tool_ranks[layer, head, qix] = 1 / gold_rank # store reciprocal rank for calculating mean reciprocal rank later
 
+        # Clean up GPU memory
+        del attentions, doc_scores, inputs
+        torch.cuda.empty_cache()
+
     # Calculate mean reciprocal rank for each head across all queries
     head_scores = query_gold_tool_ranks.mean(dim=2)
 
