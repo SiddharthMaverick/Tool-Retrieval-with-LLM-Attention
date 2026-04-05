@@ -38,8 +38,6 @@ def query_to_docs_attention(attentions, query_span, doc_spans):
     """
     doc_scores = torch.zeros(len(doc_spans), device=attentions[0].device)
     for attn_layer in attentions:
-        # attn_layer shape: [1, heads, N, N]
-        # We will average over heads and query tokens to get a single attention score for each document
         attn_layer = attn_layer.squeeze(0)  # shape: [heads, N, N]
         query_attn = attn_layer[:, query_span[0]:query_span[1], :]  # shape: [heads, query_len, N]
         doc_attn_scores = []
@@ -76,7 +74,6 @@ def analyze_gold_attention(result, save_path="plot2/gold_attention_plot.png"):
         score = res["gold_score"]
         position_scores.setdefault(pos, []).append(score)
 
-    # Compute average score per position and sort by position
     positions = sorted(position_scores.keys())
     avg_scores = [np.mean(position_scores[p]) for p in positions]
     counts = [len(position_scores[p]) for p in positions]
@@ -86,7 +83,6 @@ def analyze_gold_attention(result, save_path="plot2/gold_attention_plot.png"):
     fig, ax = plt.subplots(figsize=(12, 6))
     bars = ax.bar(positions, avg_scores, color="steelblue", edgecolor="black", alpha=0.8)
 
-    # Annotate each bar with the count of queries at that position
     for bar, cnt in zip(bars, counts):
         ax.text(
             bar.get_x() + bar.get_width() / 2,
