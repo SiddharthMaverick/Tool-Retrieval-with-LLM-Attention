@@ -6,6 +6,7 @@ Goal:
     - Use ONLY those heads to rank tools at test time
 '''
 
+import json
 import os
 os.environ["TRANSFORMERS_OFFLINE"] = "1"
 
@@ -45,56 +46,47 @@ def query_to_docs_attention_heads(attentions, query_span, doc_spans, selected_he
         doc_scores: tensor of shape [num_docs]
     """
 
+    selected_heads = [(int(layer.replace("layer", "")), int(head.replace("head", ""))) for layer, head in selected_heads]
+
     doc_scores = torch.zeros(len(doc_spans), device=attentions[0].device)
 
-    q_start, q_end = query_span
-    num_docs       = len(doc_spans)
+    for layer, head in selected_heads:
+        layer_attn = attentions[layer][0]  # shape: [h, N, N]
+        query_attn = layer_attn[head, query_span[0]:query_span[1], :]  # shape: [query_len, N]
 
-    # Precompute per-doc lengths for normalisation
-    doc_lengths = torch.tensor(
-        [max(end - start, 1) for start, end in doc_spans],
-        dtype=torch.float32,
-        device=attentions[0].device
-    )
+        for doc_idx, (start, end) in enumerate(doc_spans):
+            doc_attn = query_attn[:, start:end]  # shape: [query_len, doc_len]
+            doc_score = doc_attn.mean().item()  # average over query and document tokens
+            doc_scores[doc_idx] += doc_score
 
-    num_selected = len(selected_heads)
-    if num_selected == 0:
-        return doc_scores
-
-    for (layer_idx, head_idx) in selected_heads:
-        layer_attn = attentions[layer_idx]   # [1, num_heads, N, N]
-        head_attn  = layer_attn[0, head_idx] # [N, N]
-
-        query_attn = head_attn[q_start:q_end, :]  # [q_len, N]
-
-        for doc_idx, (d_start, d_end) in enumerate(doc_spans):
-            score = query_attn[:, d_start:d_end].sum()
-            doc_scores[doc_idx] += score / doc_lengths[doc_idx]
-
-    # Average over selected heads
-    doc_scores = doc_scores / num_selected
+    doc_scores /= len(selected_heads)  # average over selected heads
 
     return doc_scores
 
 
-def get_query_span(input_ids, tokenizer, query_text):
+def get_query_span(tokenized_query, tokenized_prompt):
     # TODO 3: Query span
     """
-    Identify the token span corresponding to the query in the prompt.
-    Mirrors the implementation in run2.py.
+    Identify the token span corresponding to the query.
+    Note: you are free to add/remove args in this function
     """
-    query_marker = f"Query: {query_text}"
-    marker_ids   = tokenizer(query_marker, add_special_tokens=False).input_ids
-    marker_len   = len(marker_ids)
-    ids_list     = input_ids.tolist()
-    n            = len(ids_list)
+    start = len(tokenized_prompt) - 1
+    end = len(tokenized_prompt) - 1
 
-    for i in range(n - marker_len + 1):
-        if ids_list[i: i + marker_len] == marker_ids:
-            return (i, i + marker_len)
+    i = len(tokenized_prompt) - 1
+    j = len(tokenized_query) - 1
 
-    # Fallback: assume query is at the end of the sequence
-    return (n - marker_len, n)
+    while(i >= 0):
+        if tokenized_prompt[i] == tokenized_query[j]:
+            if j == len(tokenized_query) - 1:
+                end = i + 1
+            j -= 1
+            if j < 0:
+                start = i
+                break
+        i -= 1  
+
+    return (start, end)
 
 
 parser = argparse.ArgumentParser()
@@ -110,7 +102,7 @@ if __name__ == '__main__':
 
     seed_all(args.seed)
     model_name = args.model
-    device = "cuda:0"
+    device = "cuda:0"    
     tokenizer, model = load_model_tokenizer(model_name=model_name, device=device, dtype=torch.float16)
 
     train_queries, test_queries, tools = get_queries_and_items()
@@ -126,17 +118,24 @@ if __name__ == '__main__':
     )
 
     print(f"Selected {len(selected_heads)} heads")
+
+    os.makedirs("results/q3", exist_ok=True)
+    with open("results/q3/selected_heads.json", "w") as f:
+        json.dump(selected_heads, f)
+
     print(selected_heads)
 
     print("\n[Phase 2] Evaluating on test set...")
+    recall_at_1 = 0
     correct_at_1 = 0
+    recall_at_5 = 0
     correct_at_5 = 0
-    total        = 0
+    total = 0
 
     for qix in tqdm(range(len(test_queries))):
 
-        sample         = test_queries[qix]
-        question       = sample["text"]
+        sample = test_queries[qix]
+        question = sample["text"]
         gold_tool_name = sample["gold_tool_name"]
 
         # --------------------
@@ -146,12 +145,14 @@ if __name__ == '__main__':
         random.shuffle(shuffled_keys)
 
         putils = PromptUtils(
+            # dataset="toole",
+            # model_name=args.model,
             tokenizer=tokenizer,
             doc_ids=shuffled_keys,
             dict_all_docs=tools,
         )
 
-        item_spans     = putils.doc_spans
+        item_spans = putils.doc_spans
         map_docname_id = putils.dict_doc_name_id
 
         gold_tool_id = map_docname_id[gold_tool_name]
@@ -164,12 +165,9 @@ if __name__ == '__main__':
         with torch.no_grad():
             attentions = model(**inputs).attentions
 
-        # TODO 3: get query span
-        query_span = get_query_span(
-            input_ids=input_ids.cpu(),
-            tokenizer=tokenizer,
-            query_text=question,
-        )
+        modified_question = "Query: " + question + "\n"
+        tokenized_query = tokenizer(modified_question, return_tensors="pt", add_special_tokens=False).input_ids[0]
+        query_span = get_query_span(tokenized_query=tokenized_query, tokenized_prompt=input_ids)
 
         doc_scores = query_to_docs_attention_heads(
             attentions,
@@ -178,21 +176,25 @@ if __name__ == '__main__':
             selected_heads
         )
 
+
         # TODO: ranking the docs
         ranked_docs = torch.argsort(doc_scores, descending=True)
-        gold_rank   = (ranked_docs == gold_tool_id).nonzero(as_tuple=True)[0].item()
+        gold_rank = (ranked_docs == gold_tool_id).nonzero(as_tuple=True)[0].item()
+
 
         # TODO: measure the recall@1, recall@5
-        if gold_rank == 0:
-            correct_at_1 += 1
-        if gold_rank < 5:
-            correct_at_5 += 1
+        correct_at_1 += (gold_rank == 0)
+        correct_at_5 += (gold_rank < 5)
         total += 1
-
-        del attentions
-        torch.cuda.empty_cache()
 
     recall_at_1 = correct_at_1 / total
     recall_at_5 = correct_at_5 / total
+
+    with open("results/q3/test_results.json", "w") as f:
+        json.dump({
+            "recall_at_1": recall_at_1,
+            "recall_at_5": recall_at_5
+        }, f)
+
     print(f"\nRecall@1 (selected heads): {recall_at_1:.4f}")
-    print(f"Recall@5 (selected heads): {recall_at_5:.4f}")
+    print(f"\nRecall@5 (selected heads): {recall_at_5:.4f}")
