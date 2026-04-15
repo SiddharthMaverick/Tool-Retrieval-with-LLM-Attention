@@ -156,7 +156,7 @@ done
 
 ## 📉 Lost in the Middle — Visualization
 
-![Lost in the Middle](plot2/gold_attention_plot.png)
+![Lost in the Middle](gold_attention_plot.png)
 
 **What the plot shows:**
 
